@@ -142,3 +142,17 @@ if not summary_df.empty:
             ["Total Gas Closing", "Total Condensate Closing", "Total Flare"]
         ]
     )
+
+st.divider()
+st.subheader("⚠️ Data Reset (Admin)")
+
+if st.button("Delete ALL Historical Data"):
+    if os.path.exists(summary_file):
+        os.remove(summary_file)
+    if os.path.exists(well_file):
+        os.remove(well_file)
+
+    st.success("All historical data deleted. Please re-upload DOR files.")
+    st.stop()
+
+
