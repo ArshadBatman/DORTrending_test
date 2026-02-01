@@ -147,8 +147,11 @@ if not summary_df.empty:
     )
 
     if selected_metrics:
+        # Convert date to string for X-axis to remove time
+        trend_df["Date_str"] = trend_df["Date"].dt.strftime("%Y-%m-%d")
+
         st.line_chart(
-            trend_df.set_index(trend_df["Date"].dt.date)[selected_metrics]
+            trend_df.set_index("Date_str")[selected_metrics]
         )
 
 # =========================
@@ -166,3 +169,4 @@ if confirm and st.button("Delete ALL Historical Data"):
         os.remove(well_file)
     st.success("All historical data deleted. Please re-upload DOR files.")
     st.stop()
+
