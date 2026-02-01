@@ -135,24 +135,34 @@ st.subheader("Field Production Trend")
 if not summary_df.empty:
     trend_df = summary_df.copy()
     trend_df["Date"] = pd.to_datetime(trend_df["Date"], errors="coerce")
-    trend_df = trend_df.dropna(subset=["Date"]).sort_values("Date")
+    trend_df = trend_df.dropna(subset=["Date"])
+    trend_df = trend_df.sort_values("Date")
 
-    st.line_chart(
-        trend_df.set_index("Date")[
-            ["Total Gas Closing", "Total Condensate Closing", "Total Flare"]
-        ]
+    # --- Multi-select metrics to display ---
+    metrics = ["Total Gas Closing", "Total Condensate Closing", "CO2 Content", "Total Flare"]
+    selected_metrics = st.multiselect(
+        "Select metrics to display",
+        options=metrics,
+        default=["Total Gas Closing"]
     )
 
+    if selected_metrics:
+        st.line_chart(
+            trend_df.set_index(trend_df["Date"].dt.date)[selected_metrics]
+        )
+
+# =========================
+# Data Reset (Admin)
+# =========================
 st.divider()
 st.subheader("⚠️ Data Reset (Admin)")
 
-if st.button("Delete ALL Historical Data"):
+confirm = st.checkbox("I understand this will delete all historical data")
+
+if confirm and st.button("Delete ALL Historical Data"):
     if os.path.exists(summary_file):
         os.remove(summary_file)
     if os.path.exists(well_file):
         os.remove(well_file)
-
     st.success("All historical data deleted. Please re-upload DOR files.")
     st.stop()
-
-
