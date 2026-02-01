@@ -35,6 +35,10 @@ if uploaded_file:
     # Read the specified sheet
     sheet = pd.read_excel(uploaded_file, sheet_name="TBC DOR", header=None)  # header=None to use exact row numbers
 
+    # --- Extract DOR Date ---
+    dor_date = sheet.at[2, 5]  # F3
+    dor_date = pd.to_datetime(dor_date).date()
+    
     # --- Extract summary data ---
     total_gas = sheet.at[72, 7]        # H73 → row 72, column 7 (0-indexed)
     total_cond = sheet.at[73, 14]      # O74 → row 73, column 14
@@ -48,6 +52,9 @@ if uploaded_file:
     st.write(f"**CO2 Content (Metering):** {co2_content}")
     st.write(f"**Total HP/LP Flare:** {total_flare}")
 
+    # Prevent duplicate date entries
+    summary_df = summary_df[summary_df["Date"] != str(dor_date)]
+    
     # Append summary to CSV
     new_summary = pd.DataFrame([{
         "Date": pd.Timestamp.today().strftime("%Y-%m-%d"),
@@ -64,16 +71,37 @@ if uploaded_file:
     well_data.columns = ["Well No.","SITHP (kPa)","Status@0600Hrs","WELL MSFR %","FTHP (kPa)","FTHT (°C)",
                          "Bean Size (/64”)","(%) Choke Opening","Gas Rate (mmscfd)","Condy (Sm3/d)","Water (Sm3/d)","REMARKS"]
     
-    # Display Well Status
+    # Drop empty wells
+    well_data = well_data.dropna(subset=["Well No."])
+
+    # Add DOR Date
+    well_data["Date"] = dor_date
+    
+    # Remove duplicates for same well & date
+    if not well_df.empty:
+        well_df = well_df[
+            ~((well_df["Date"] == dor_date) &
+              (well_df["Well No."].isin(well_data["Well No."])))
+        ]
+    
+    # Save
+    well_df = pd.concat([well_df, well_data], ignore_index=True)
+    well_df.to_csv(well_file, index=False)
+    
     st.subheader("TBDR Well Status")
     st.dataframe(well_data)
 
-    # Append/update well data with date
-    well_data["Date"] = pd.Timestamp.today().strftime("%Y-%m-%d")
-    well_df = pd.concat([well_df, well_data], ignore_index=True)
-    well_df.to_csv(well_file, index=False)
-
 # --- Trending ---
-st.subheader("Trending of Total Gas Closing")
-if not summary_df.empty:
-    st.line_chart(summary_df.set_index("Date")["Total Gas Closing"])
+st.subheader("Field Production Trend")
+
+trend_df = summary_df.copy()
+trend_df["Date"] = pd.to_datetime(trend_df["Date"])
+trend_df = trend_df.sort_values("Date")
+
+st.line_chart(
+    trend_df.set_index("Date")[
+        ["Total Gas Closing", "Total Condensate Closing", "Total Flare"]
+    ]
+)
+
+
