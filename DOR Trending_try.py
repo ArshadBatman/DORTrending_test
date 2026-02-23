@@ -8,11 +8,10 @@ os.makedirs("data", exist_ok=True)
 
 # --- File paths ---
 summary_file = "data/summary_data.csv"
-well_file = "data/well_data.csv"
 
-# --- Load historical data ---
+# --- Load historical data safely (Date as string) ---
 if os.path.exists(summary_file):
-    summary_df = pd.read_csv(summary_file)
+    summary_df = pd.read_csv(summary_file, dtype={"Date": str})
 else:
     summary_df = pd.DataFrame(columns=[
         "Date",
@@ -21,11 +20,6 @@ else:
         "CO2 Content",
         "Total Flare"
     ])
-
-if os.path.exists(well_file):
-    well_df = pd.read_csv(well_file)
-else:
-    well_df = pd.DataFrame()
 
 # --- UI ---
 st.title("Tangga Barat Gas Field – Daily Surveillance")
@@ -44,17 +38,8 @@ if uploaded_file:
     raw_start_date = sheet.at[2, 3]   # D3
     raw_closing_date = sheet.at[2, 5] # F3
 
-    start_date = pd.to_datetime(
-        raw_start_date,
-        format="%d %B %Y",
-        errors="coerce"
-    )
-
-    closing_date = pd.to_datetime(
-        raw_closing_date,
-        format="%d %B %Y",
-        errors="coerce"
-    )
+    start_date = pd.to_datetime(raw_start_date, format="%d %B %Y", errors="coerce")
+    closing_date = pd.to_datetime(raw_closing_date, format="%d %B %Y", errors="coerce")
 
     if pd.isna(start_date) or pd.isna(closing_date):
         st.error("Invalid Date format in D3 or F3")
@@ -80,14 +65,15 @@ if uploaded_file:
     st.metric("Total HP / LP Flare", total_flare)
 
     # =========================
-    # Save Summary (based on Closing Date)
+    # Save Summary (SAFE STRING DATE)
     # =========================
-    summary_df["Date"] = pd.to_datetime(summary_df["Date"], errors="coerce")
+    summary_df["Date"] = summary_df["Date"].astype(str)
 
-    summary_df = summary_df[summary_df["Date"].dt.date != closing_date]
+    # Remove duplicate closing date if exists
+    summary_df = summary_df[summary_df["Date"] != str(closing_date)]
 
     new_summary = pd.DataFrame([{
-        "Date": closing_date,
+        "Date": str(closing_date),
         "Total Gas Closing": total_gas,
         "Total Condensate Closing": total_cond,
         "CO2 Content": co2_content,
@@ -105,12 +91,8 @@ if uploaded_file:
 st.subheader("Daily Field Summary History")
 
 if not summary_df.empty:
-    summary_df["Date"] = pd.to_datetime(summary_df["Date"], errors="coerce")
-    summary_df = summary_df.sort_values("Date")
-
     display_df = summary_df.copy()
-    display_df["Date"] = display_df["Date"].dt.strftime("%Y-%m-%d")
-
+    display_df = display_df.sort_values("Date")
     st.dataframe(display_df, use_container_width=True)
 
 # =========================
@@ -119,12 +101,20 @@ if not summary_df.empty:
 st.subheader("Field Production Trend")
 
 if not summary_df.empty:
+
     trend_df = summary_df.copy()
-    trend_df["Date"] = pd.to_datetime(trend_df["Date"], errors="coerce")
+
+    # Convert to datetime ONLY for plotting
+    trend_df["Date"] = pd.to_datetime(trend_df["Date"], format="%Y-%m-%d", errors="coerce")
     trend_df = trend_df.dropna(subset=["Date"])
     trend_df = trend_df.sort_values("Date")
 
-    metrics = ["Total Gas Closing", "Total Condensate Closing", "CO2 Content", "Total Flare"]
+    metrics = [
+        "Total Gas Closing",
+        "Total Condensate Closing",
+        "CO2 Content",
+        "Total Flare"
+    ]
 
     selected_metrics = st.multiselect(
         "Select metrics to display",
@@ -140,7 +130,7 @@ if not summary_df.empty:
         )
 
 # =========================
-# Data Reset
+# Data Reset (Admin)
 # =========================
 st.divider()
 st.subheader("⚠️ Data Reset (Admin)")
@@ -150,7 +140,5 @@ confirm = st.checkbox("I understand this will delete all historical data")
 if confirm and st.button("Delete ALL Historical Data"):
     if os.path.exists(summary_file):
         os.remove(summary_file)
-    if os.path.exists(well_file):
-        os.remove(well_file)
     st.success("All historical data deleted. Please re-upload DOR files.")
     st.stop()
