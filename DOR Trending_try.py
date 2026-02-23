@@ -6,15 +6,16 @@ import os
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("data", exist_ok=True)
 
-# --- File paths ---
+# --- File path ---
 summary_file = "data/summary_data.csv"
 
-# --- Load historical data safely (Date as string) ---
+# --- Load historical data safely ---
 if os.path.exists(summary_file):
     summary_df = pd.read_csv(summary_file, dtype={"Date": str})
 else:
     summary_df = pd.DataFrame(columns=[
         "Date",
+        "Gas Nom",
         "Total Gas Closing",
         "Total Condensate Closing",
         "CO2 Content",
@@ -26,17 +27,22 @@ st.title("Tangga Barat Gas Field – Daily Surveillance")
 uploaded_file = st.file_uploader("Upload Daily Operation Report (TBC DOR)", type=["xlsx"])
 
 if uploaded_file:
+
     upload_path = f"uploads/{uploaded_file.name}"
     with open(upload_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    sheet = pd.read_excel(uploaded_file, sheet_name="TBC DOR", header=None)
+    # =========================
+    # Read required sheets
+    # =========================
+    dor_sheet = pd.read_excel(uploaded_file, sheet_name="TBC DOR", header=None)
+    summary_sheet = pd.read_excel(uploaded_file, sheet_name="Summary", header=None)
 
     # =========================
     # Extract Dates
     # =========================
-    raw_start_date = sheet.at[2, 3]   # D3
-    raw_closing_date = sheet.at[2, 5] # F3
+    raw_start_date = dor_sheet.at[2, 3]   # D3
+    raw_closing_date = dor_sheet.at[2, 5] # F3
 
     start_date = pd.to_datetime(raw_start_date, format="%d %B %Y", errors="coerce")
     closing_date = pd.to_datetime(raw_closing_date, format="%d %B %Y", errors="coerce")
@@ -51,29 +57,37 @@ if uploaded_file:
     st.info(f"DOR Period: {start_date} 0600Hrs → {closing_date} 0600Hrs")
 
     # =========================
+    # Extract Gas Nom (Summary sheet D2)
+    # =========================
+    gas_nom = summary_sheet.at[1, 3]  # D2
+
+    # =========================
     # Extract Summary Metrics
     # =========================
-    total_gas = sheet.at[72, 7]
-    total_cond = sheet.at[73, 14]
-    co2_content = sheet.at[78, 14]
-    total_flare = sheet.at[97, 6]
+    total_gas = dor_sheet.at[72, 7]
+    total_cond = dor_sheet.at[73, 14]
+    co2_content = dor_sheet.at[78, 14]
+    total_flare = dor_sheet.at[97, 6]
 
     st.subheader(f"Summary Metrics (Closing {closing_date})")
-    st.metric("Total Gas Closing", total_gas)
-    st.metric("Total Condensate Closing", total_cond)
+
+    col1, col2 = st.columns(2)
+    col1.metric("Gas Nomination", gas_nom)
+    col1.metric("Total Gas Closing", total_gas)
+    col2.metric("Total Condensate Closing", total_cond)
+    col2.metric("Total HP / LP Flare", total_flare)
+
     st.metric("CO₂ Content (Metering)", co2_content)
-    st.metric("Total HP / LP Flare", total_flare)
 
     # =========================
     # Save Summary (SAFE STRING DATE)
     # =========================
     summary_df["Date"] = summary_df["Date"].astype(str)
-
-    # Remove duplicate closing date if exists
     summary_df = summary_df[summary_df["Date"] != str(closing_date)]
 
     new_summary = pd.DataFrame([{
         "Date": str(closing_date),
+        "Gas Nom": gas_nom,
         "Total Gas Closing": total_gas,
         "Total Condensate Closing": total_cond,
         "CO2 Content": co2_content,
@@ -104,12 +118,12 @@ if not summary_df.empty:
 
     trend_df = summary_df.copy()
 
-    # Convert to datetime ONLY for plotting
     trend_df["Date"] = pd.to_datetime(trend_df["Date"], format="%Y-%m-%d", errors="coerce")
     trend_df = trend_df.dropna(subset=["Date"])
     trend_df = trend_df.sort_values("Date")
 
     metrics = [
+        "Gas Nom",
         "Total Gas Closing",
         "Total Condensate Closing",
         "CO2 Content",
@@ -119,7 +133,7 @@ if not summary_df.empty:
     selected_metrics = st.multiselect(
         "Select metrics to display",
         options=metrics,
-        default=["Total Gas Closing"]
+        default=["Total Gas Closing", "Gas Nom"]
     )
 
     if selected_metrics:
