@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 
-# --- Folder setup ---
-os.makedirs("uploads", exist_ok=True)
+# =========================
+# Setup
+# =========================
 os.makedirs("data", exist_ok=True)
 
 summary_file = "data/summary_data.csv"
@@ -35,14 +36,15 @@ else:
 st.title("Tangga Barat Gas Field – Daily Surveillance")
 uploaded_file = st.file_uploader("Upload Daily Operation Report (TBC DOR)", type=["xlsx"])
 
+# =========================
+# PROCESS UPLOAD
+# =========================
 if uploaded_file:
 
     dor_sheet = pd.read_excel(uploaded_file, sheet_name="TBC DOR", header=None)
     summary_sheet = pd.read_excel(uploaded_file, sheet_name="Summary", header=None)
 
-    # =========================
-    # Extract Dates
-    # =========================
+    # ---- Extract Dates ----
     start_date = pd.to_datetime(dor_sheet.at[2, 3], format="%d %B %Y", errors="coerce")
     closing_date = pd.to_datetime(dor_sheet.at[2, 5], format="%d %B %Y", errors="coerce")
 
@@ -50,31 +52,28 @@ if uploaded_file:
         st.error("Invalid Date format in D3 or F3")
         st.stop()
 
-    start_date = start_date.date()
     closing_date = closing_date.date()
+    st.info(f"DOR Closing Date: {closing_date} 0600Hrs")
 
-    st.info(f"DOR Period: {start_date} 0600Hrs → {closing_date} 0600Hrs")
+    # ---- Extract Gas Nom ----
+    gas_nom = summary_sheet.at[1, 3]
 
-    # =========================
-    # Extract Gas Nom
-    # =========================
-    gas_nom = summary_sheet.at[1, 3]  # D2
-
-    # =========================
-    # Extract Field Summary
-    # =========================
+    # ---- Extract Field Summary ----
     total_gas = dor_sheet.at[72, 7]
     total_cond = dor_sheet.at[73, 14]
     co2_content = dor_sheet.at[78, 14]
     total_flare = dor_sheet.at[97, 6]
 
-    st.subheader(f"Summary Metrics (Closing {closing_date})")
-    st.metric("Gas Nomination", gas_nom)
-    st.metric("Total Gas Closing", total_gas)
+    # ---- Display Metrics ----
+    st.subheader("Daily Summary Metrics")
+    col1, col2 = st.columns(2)
+    col1.metric("Gas Nomination", gas_nom)
+    col1.metric("Total Gas Closing", total_gas)
+    col2.metric("Total Condensate Closing", total_cond)
+    col2.metric("Total Flare", total_flare)
+    st.metric("CO₂ Content", co2_content)
 
-    # =========================
-    # Save Daily Summary
-    # =========================
+    # ---- Save Summary ----
     summary_df = summary_df[summary_df["Date"] != str(closing_date)]
 
     new_summary = pd.DataFrame([{
@@ -117,18 +116,14 @@ if uploaded_file:
 
         return block
 
-    # =========================
-    # Extract All Well Groups
-    # =========================
-    tbdr_wells = extract_well_block(32, 48, "TBDR")
-    lhdp_wells = extract_well_block(51, 55, "LHDP")
-    mldp_wells = extract_well_block(59, 65, "MLDP")
+    # ---- Extract All Groups ----
+    tbdr = extract_well_block(32, 48, "TBDR")
+    lhdp = extract_well_block(51, 55, "LHDP")
+    mldp = extract_well_block(59, 65, "MLDP")
 
-    new_wells = pd.concat([tbdr_wells, lhdp_wells, mldp_wells], ignore_index=True)
+    new_wells = pd.concat([tbdr, lhdp, mldp], ignore_index=True)
 
-    # =========================
-    # Save Well Data (No Duplicates per Date + Well)
-    # =========================
+    # ---- Remove duplicate wells for same date ----
     if not well_df.empty:
         well_df = well_df[
             ~(
@@ -143,25 +138,75 @@ if uploaded_file:
     st.success("Daily summary & well data saved successfully.")
 
 # =========================
-# Historical Summary Table
+# DAILY SUMMARY TABLE
 # =========================
 st.subheader("Daily Field Summary History")
 if not summary_df.empty:
     st.dataframe(summary_df.sort_values("Date"), use_container_width=True)
 
 # =========================
-# Well Historical Table
+# WELL HISTORY BY DATE
 # =========================
 st.subheader("Well Historical Data")
+
 if not well_df.empty:
-    st.dataframe(well_df.sort_values(["Date", "Group"]), use_container_width=True)
+
+    available_dates = sorted(well_df["Date"].unique())
+    selected_date = st.selectbox("Select Date", available_dates[::-1])
+
+    filtered_wells = well_df[well_df["Date"] == selected_date]
+    st.dataframe(filtered_wells.sort_values("Group"), use_container_width=True)
 
 # =========================
-# Trend Chart
+# WELL STATUS SUMMARY
+# =========================
+st.subheader("Well Status Summary")
+
+if not well_df.empty:
+
+    status_df = well_df.copy()
+    status_df["Date"] = pd.to_datetime(status_df["Date"])
+
+    latest_date = status_df["Date"].max()
+    latest_status = status_df[status_df["Date"] == latest_date]
+
+    # ---- Find last shut-in date per well ----
+    shutin_df = status_df[
+        status_df["Status @0600 hrs"].str.lower().str.contains("shut", na=False)
+    ]
+
+    last_shutin = (
+        shutin_df.sort_values("Date")
+        .groupby("Well Name")
+        .tail(1)[["Well Name", "Date"]]
+    )
+
+    last_shutin = last_shutin.rename(columns={"Date": "Last Shut-In Date"})
+
+    well_status_summary = latest_status.merge(
+        last_shutin,
+        on="Well Name",
+        how="left"
+    )
+
+    well_status_summary["Last Shut-In Date"] = well_status_summary[
+        "Last Shut-In Date"
+    ].dt.strftime("%Y-%m-%d")
+
+    st.dataframe(
+        well_status_summary[
+            ["Well Name", "Group", "Status @0600 hrs", "Last Shut-In Date"]
+        ].sort_values("Group"),
+        use_container_width=True
+    )
+
+# =========================
+# TREND CHART
 # =========================
 st.subheader("Field Production Trend")
 
 if not summary_df.empty:
+
     trend_df = summary_df.copy()
     trend_df["Date"] = pd.to_datetime(trend_df["Date"], format="%Y-%m-%d")
     trend_df = trend_df.sort_values("Date")
@@ -183,3 +228,19 @@ if not summary_df.empty:
     if selected_metrics:
         trend_df["Date_str"] = trend_df["Date"].dt.strftime("%Y-%m-%d")
         st.line_chart(trend_df.set_index("Date_str")[selected_metrics])
+
+# =========================
+# DATA RESET (ADMIN)
+# =========================
+st.divider()
+st.subheader("⚠️ Data Reset (Admin)")
+
+confirm = st.checkbox("I understand this will delete all historical data")
+
+if confirm and st.button("Delete ALL Historical Data"):
+    if os.path.exists(summary_file):
+        os.remove(summary_file)
+    if os.path.exists(well_file):
+        os.remove(well_file)
+    st.success("All historical data deleted. Please re-upload DOR files.")
+    st.stop()
