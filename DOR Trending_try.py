@@ -34,108 +34,115 @@ else:
 # UI
 # =========================
 st.title("Tangga Barat Gas Field – Daily Surveillance")
-uploaded_file = st.file_uploader("Upload Daily Operation Report (TBC DOR)", type=["xlsx"])
+
+uploaded_files = st.file_uploader(
+    "Upload Daily Operation Report (TBC DOR)",
+    type=["xlsx"],
+    accept_multiple_files=True
+)
 
 # =========================
-# PROCESS UPLOAD
+# PROCESS MULTIPLE FILES
 # =========================
-if uploaded_file:
+if uploaded_files:
 
-    dor_sheet = pd.read_excel(uploaded_file, sheet_name="TBC DOR", header=None)
-    summary_sheet = pd.read_excel(uploaded_file, sheet_name="Summary", header=None)
+    progress = st.progress(0)
+    total_files = len(uploaded_files)
 
-    # ---- Extract Dates ----
-    start_date = pd.to_datetime(dor_sheet.at[2, 3], format="%d %B %Y", errors="coerce")
-    closing_date = pd.to_datetime(dor_sheet.at[2, 5], format="%d %B %Y", errors="coerce")
+    for idx, uploaded_file in enumerate(uploaded_files):
 
-    if pd.isna(start_date) or pd.isna(closing_date):
-        st.error("Invalid Date format in D3 or F3")
-        st.stop()
+        try:
+            dor_sheet = pd.read_excel(uploaded_file, sheet_name="TBC DOR", header=None)
+            summary_sheet = pd.read_excel(uploaded_file, sheet_name="Summary", header=None)
 
-    closing_date = closing_date.date()
-    st.info(f"DOR Closing Date: {closing_date} 0600Hrs")
+            # ---- Extract Dates ----
+            start_date = pd.to_datetime(dor_sheet.at[2, 3], format="%d %B %Y", errors="coerce")
+            closing_date = pd.to_datetime(dor_sheet.at[2, 5], format="%d %B %Y", errors="coerce")
 
-    # ---- Extract Gas Nom ----
-    gas_nom = summary_sheet.at[1, 3]
+            if pd.isna(start_date) or pd.isna(closing_date):
+                st.warning(f"{uploaded_file.name} skipped (invalid date format)")
+                continue
 
-    # ---- Extract Field Summary ----
-    total_gas = dor_sheet.at[72, 7]
-    total_cond = dor_sheet.at[73, 14]
-    co2_content = dor_sheet.at[78, 14]
-    total_flare = dor_sheet.at[97, 6]
+            closing_date = str(closing_date.date())
 
-    # ---- Display Metrics ----
-    st.subheader("Daily Summary Metrics")
-    col1, col2 = st.columns(2)
-    col1.metric("Gas Nomination", gas_nom)
-    col1.metric("Total Gas Closing", total_gas)
-    col2.metric("Total Condensate Closing", total_cond)
-    col2.metric("Total Flare", total_flare)
-    st.metric("CO₂ Content", co2_content)
+            # ---- Extract Gas Nom ----
+            gas_nom = summary_sheet.at[1, 3]
 
-    # ---- Save Summary ----
-    summary_df = summary_df[summary_df["Date"] != str(closing_date)]
+            # ---- Extract Field Summary ----
+            total_gas = dor_sheet.at[72, 7]
+            total_cond = dor_sheet.at[73, 14]
+            co2_content = dor_sheet.at[78, 14]
+            total_flare = dor_sheet.at[97, 6]
 
-    new_summary = pd.DataFrame([{
-        "Date": str(closing_date),
-        "Gas Nom": gas_nom,
-        "Total Gas Closing": total_gas,
-        "Total Condensate Closing": total_cond,
-        "CO2 Content": co2_content,
-        "Total Flare": total_flare
-    }])
+            # ---- Remove duplicate summary date ----
+            summary_df = summary_df[summary_df["Date"] != closing_date]
 
-    summary_df = pd.concat([summary_df, new_summary], ignore_index=True)
+            new_summary = pd.DataFrame([{
+                "Date": closing_date,
+                "Gas Nom": gas_nom,
+                "Total Gas Closing": total_gas,
+                "Total Condensate Closing": total_cond,
+                "CO2 Content": co2_content,
+                "Total Flare": total_flare
+            }])
+
+            summary_df = pd.concat([summary_df, new_summary], ignore_index=True)
+
+            # =========================
+            # WELL EXTRACTION FUNCTION
+            # =========================
+            def extract_well_block(start_row, end_row, group_name):
+                block = dor_sheet.iloc[start_row:end_row, 1:14].copy()
+
+                block.columns = [
+                    "Well Name",
+                    "Flowing Hours",
+                    "SITHP (kPa)",
+                    "Status @0600 hrs",
+                    "Well MSFR%",
+                    "FTHP (kPa)",
+                    "FTHT (°C)",
+                    "Bean Size (/64”)",
+                    "(%) Choke Opening",
+                    "Gas Rate (mmscfd)",
+                    "Condy (Sm3/d)",
+                    "Water (Sm3/d)",
+                    "Remarks"
+                ]
+
+                block = block.dropna(subset=["Well Name"])
+                block["Group"] = group_name
+                block["Date"] = closing_date
+
+                return block
+
+            tbdr = extract_well_block(32, 48, "TBDR")
+            lhdp = extract_well_block(51, 55, "LHDP")
+            mldp = extract_well_block(59, 65, "MLDP")
+
+            new_wells = pd.concat([tbdr, lhdp, mldp], ignore_index=True)
+
+            # ---- Remove duplicate wells for same date ----
+            if not well_df.empty:
+                well_df = well_df[
+                    ~(
+                        (well_df["Date"] == closing_date) &
+                        (well_df["Well Name"].isin(new_wells["Well Name"]))
+                    )
+                ]
+
+            well_df = pd.concat([well_df, new_wells], ignore_index=True)
+
+            st.success(f"{uploaded_file.name} processed successfully.")
+
+        except Exception as e:
+            st.error(f"Error processing {uploaded_file.name}: {e}")
+
+        progress.progress((idx + 1) / total_files)
+
+    # ---- Save after ALL files processed ----
     summary_df.to_csv(summary_file, index=False)
-
-    # =========================
-    # WELL EXTRACTION FUNCTION
-    # =========================
-    def extract_well_block(start_row, end_row, group_name):
-        block = dor_sheet.iloc[start_row:end_row, 1:14].copy()
-
-        block.columns = [
-            "Well Name",
-            "Flowing Hours",
-            "SITHP (kPa)",
-            "Status @0600 hrs",
-            "Well MSFR%",
-            "FTHP (kPa)",
-            "FTHT (°C)",
-            "Bean Size (/64”)",
-            "(%) Choke Opening",
-            "Gas Rate (mmscfd)",
-            "Condy (Sm3/d)",
-            "Water (Sm3/d)",
-            "Remarks"
-        ]
-
-        block = block.dropna(subset=["Well Name"])
-        block["Group"] = group_name
-        block["Date"] = str(closing_date)
-
-        return block
-
-    # ---- Extract All Groups ----
-    tbdr = extract_well_block(32, 48, "TBDR")
-    lhdp = extract_well_block(51, 55, "LHDP")
-    mldp = extract_well_block(59, 65, "MLDP")
-
-    new_wells = pd.concat([tbdr, lhdp, mldp], ignore_index=True)
-
-    # ---- Remove duplicate wells for same date ----
-    if not well_df.empty:
-        well_df = well_df[
-            ~(
-                (well_df["Date"] == str(closing_date)) &
-                (well_df["Well Name"].isin(new_wells["Well Name"]))
-            )
-        ]
-
-    well_df = pd.concat([well_df, new_wells], ignore_index=True)
     well_df.to_csv(well_file, index=False)
-
-    st.success("Daily summary & well data saved successfully.")
 
 # =========================
 # DAILY SUMMARY TABLE
@@ -170,7 +177,6 @@ if not well_df.empty:
     latest_date = status_df["Date"].max()
     latest_status = status_df[status_df["Date"] == latest_date]
 
-    # ---- Find last shut-in date per well ----
     shutin_df = status_df[
         status_df["Status @0600 hrs"].str.lower().str.contains("shut", na=False)
     ]
